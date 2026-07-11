@@ -41,7 +41,7 @@ button.secondary:hover,.ghost:hover{background:#d7edec}
 .icon{padding:9px}
 .grow{flex:1}
 
-.app{max-width:1180px;margin:auto;padding:24px}
+.app{max-width:1180px;margin:auto;padding:24px;padding-top:max(24px, calc(env(safe-area-inset-top) + 16px))}
 
 header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
 h1,h2,h3,p{margin-top:0}
@@ -127,7 +127,7 @@ label{display:grid;gap:6px;font-weight:600;font-size:.85rem;margin:12px 0;color:
 .logo{width:60px;height:60px;background:var(--accent);color:#fff;border-radius:18px;display:grid;place-items:center;margin:0 auto 18px}
 
 @media(max-width:760px){
-  .app{padding:14px}
+  .app{padding:14px;padding-top:max(14px, calc(env(safe-area-inset-top) + 16px))}
   header{align-items:flex-start}
   .hero{align-items:flex-start;flex-direction:column}
   .hero .row{width:100%;flex-direction:column}
@@ -140,3 +140,4 @@ label{display:grid;gap:6px;font-weight:600;font-size:.85rem;margin:12px 0;color:
   .ghost{padding:9px 11px}
   .panel{padding:15px}
 }
+
