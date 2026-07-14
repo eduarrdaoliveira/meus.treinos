@@ -1,25 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { Calculator, CalendarDays, ChevronLeft, ChevronRight, Dumbbell, History, Layers3, LogOut, Pencil, Plus, Save, Trash2, TrendingUp, UserRound, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Dumbbell, Layers3, LogOut, Pencil, Plus, Save, Trash2, TrendingUp, UserRound } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
 
 type Exercise={id:string;name:string;group:string;equipment:string;notes:string};
 type Template={id:string;name:string;exerciseIds:string[]};
-type SetRow={weight:string;reps:string;done:boolean};
+type SetRow={weight:string;reps:string;done:boolean;unit:'kg'|'placas'};
 type WorkoutItem={exerciseId:string;sets:SetRow[];notes:string};
 type Workout={id:string;date:string;templateName:string;notes:string;items:WorkoutItem[];createdAt?:unknown};
 type Schedule={id:string;templateId:string;weekdays:number[];startDate:string;weeks:number};
 
-type Tab='today'|'exercises'|'templates'|'history'|'calendar';
+type Tab='today'|'exercises'|'templates'|'calendar'|'evolution';
+type CalView='month'|'schedule';
 const groups=['Glúteos','Quadríceps','Posterior','Panturrilhas','Costas','Peito','Ombros','Bíceps','Tríceps','Core'];
-const emptySet=():SetRow=>({weight:'',reps:'',done:false});
+const emptySet=():SetRow=>({weight:'',reps:'',done:false,unit:'kg'});
 const today=()=>new Date().toISOString().slice(0,10);
 const weekdayLabels=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-const commonPlates=[1.25,2.5,5,10,15,20,25];
 
 function fmtLong(dateStr:string){return new Intl.DateTimeFormat('pt-BR',{dateStyle:'long'}).format(new Date(dateStr+'T12:00:00'));}
 function toISO(d:Date){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${dd}`;}
+function workoutVolume(w:Workout){return w.items.flatMap(i=>i.sets).reduce((a,s)=>a+(+s.weight||0)*(+s.reps||0),0);}
 function monthMatrix(year:number,month:number){
  const first=new Date(year,month,1);
  const startWeekday=first.getDay();
@@ -37,6 +38,22 @@ function isScheduledOn(s:Schedule,d:Date){
  return s.weekdays.includes(d.getDay());
 }
 
+function SetTable({sets,onChange}:{sets:SetRow[];onChange:(j:number,key:keyof SetRow,value:string|boolean)=>void}){
+ return <>
+  <div className="setHeader"><span>#</span><span>Peso</span><span>Un.</span><span>Reps</span><span>Feita</span></div>
+  {sets.map((s,j)=><div className="setRow" key={j}>
+    <span>{j+1}</span>
+    <input type="number" value={s.weight} onChange={e=>onChange(j,'weight',e.target.value)}/>
+    <div className="unitToggle">
+     <button type="button" className={s.unit!=='placas'?'active':''} onClick={()=>onChange(j,'unit','kg')}>kg</button>
+     <button type="button" className={s.unit==='placas'?'active':''} onClick={()=>onChange(j,'unit','placas')}>pl</button>
+    </div>
+    <input type="number" value={s.reps} onChange={e=>onChange(j,'reps',e.target.value)}/>
+    <input type="checkbox" checked={s.done} onChange={e=>onChange(j,'done',e.target.checked)}/>
+  </div>)}
+ </>;
+}
+
 export default function App(){
  const [user,setUser]=useState<User|null>(null),[loading,setLoading]=useState(true),[tab,setTab]=useState<Tab>('today');
  const [exercises,setExercises]=useState<Exercise[]>([]),[templates,setTemplates]=useState<Template[]>([]),[workouts,setWorkouts]=useState<Workout[]>([]),[schedules,setSchedules]=useState<Schedule[]>([]);
@@ -45,13 +62,12 @@ export default function App(){
  const [selectedTemplate,setSelectedTemplate]=useState('');
  const [activeItems,setActiveItems]=useState<WorkoutItem[]>([]),[workoutNotes,setWorkoutNotes]=useState('');
  const [workoutDate,setWorkoutDate]=useState(today());
- const [editingDateId,setEditingDateId]=useState<string|null>(null);
- const [calc,setCalc]=useState<{key:string;bar:string;plate:string;count:string}|null>(null);
- const [historyView,setHistoryView]=useState<'lista'|'evolucao'>('lista');
  const [evoExercise,setEvoExercise]=useState('');
  const [calMonth,setCalMonth]=useState(()=>{const d=new Date();return{y:d.getFullYear(),m:d.getMonth()};});
+ const [calView,setCalView]=useState<CalView>('month');
  const [scheduleForm,setScheduleForm]=useState({templateId:'',weekdays:[] as number[],startDate:today(),weeks:8});
  const [selectedDay,setSelectedDay]=useState<string|null>(null);
+ const [editingSelectedDate,setEditingSelectedDate]=useState(false);
 
  useEffect(()=>onAuthStateChanged(auth,u=>{setUser(u);setLoading(false)}),[]);
  useEffect(()=>{if(!user)return; const base=`users/${user.uid}`;
@@ -72,20 +88,28 @@ export default function App(){
  function loadTemplate(id:string){const t=templates.find(x=>x.id===id);if(!t)return;setSelectedTemplate(id);setActiveItems(t.exerciseIds.map(exerciseId=>({exerciseId,notes:'',sets:[emptySet(),emptySet(),emptySet()]})));}
  function addExerciseToToday(id:string){setActiveItems(v=>[...v,{exerciseId:id,notes:'',sets:[emptySet(),emptySet(),emptySet()]}]);}
  function updateSet(i:number,j:number,key:keyof SetRow,value:string|boolean){setActiveItems(v=>v.map((item,ii)=>ii===i?{...item,sets:item.sets.map((s,jj)=>jj===j?{...s,[key]:value}:s)}:item));}
- async function finishWorkout(){if(!activeItems.length)return alert('Adicione ao menos um exercício.');const t=templates.find(x=>x.id===selectedTemplate);await addDoc(collection(db,base,'workouts'),{date:workoutDate,templateName:t?.name||'Treino livre',notes:workoutNotes,items:activeItems,createdAt:serverTimestamp()});setActiveItems([]);setWorkoutNotes('');setSelectedTemplate('');setWorkoutDate(today());setTab('history');}
- async function updateWorkoutDate(id:string,newDate:string){await updateDoc(doc(db,base,'workouts',id),{date:newDate});setEditingDateId(null);}
-
- function applyPlateCalc(i:number,j:number){if(!calc)return;const bar=+calc.bar||0,plate=+calc.plate||0,count=+calc.count||0;const total=bar+plate*2*count;updateSet(i,j,'weight',String(total));setCalc(null);}
+ async function finishWorkout(){if(!activeItems.length)return alert('Adicione ao menos um exercício.');const t=templates.find(x=>x.id===selectedTemplate);await addDoc(collection(db,base,'workouts'),{date:workoutDate,templateName:t?.name||'Treino livre',notes:workoutNotes,items:activeItems,createdAt:serverTimestamp()});setActiveItems([]);setWorkoutNotes('');setSelectedTemplate('');setWorkoutDate(today());setSelectedDay(null);}
 
  async function saveSchedule(){if(!scheduleForm.templateId||!scheduleForm.weekdays.length)return alert('Escolha um modelo e ao menos um dia da semana.');await addDoc(collection(db,base,'schedules'),{templateId:scheduleForm.templateId,weekdays:scheduleForm.weekdays,startDate:scheduleForm.startDate,weeks:scheduleForm.weeks});setScheduleForm({templateId:'',weekdays:[],startDate:today(),weeks:8});}
  function startScheduledWorkout(dateStr:string,templateId:string){loadTemplate(templateId);setWorkoutDate(dateStr);setTab('today');}
+ function startFreeWorkoutOn(dateStr:string){setSelectedTemplate('');setActiveItems([]);setWorkoutDate(dateStr);setTab('today');}
+
+ async function patchWorkoutItems(workoutId:string,updater:(items:WorkoutItem[])=>WorkoutItem[]){const w=workouts.find(x=>x.id===workoutId);if(!w)return;await updateDoc(doc(db,base,'workouts',workoutId),{items:updater(w.items)});}
+ function updateWorkoutSet(workoutId:string,i:number,j:number,key:keyof SetRow,value:string|boolean){patchWorkoutItems(workoutId,items=>items.map((it,ii)=>ii===i?{...it,sets:it.sets.map((s,jj)=>jj===j?{...s,[key]:value}:s)}:it));}
+ function addSetToWorkoutItem(workoutId:string,i:number){patchWorkoutItems(workoutId,items=>items.map((it,ii)=>ii===i?{...it,sets:[...it.sets,emptySet()]}:it));}
+ function removeWorkoutItem(workoutId:string,i:number){patchWorkoutItems(workoutId,items=>items.filter((_,ii)=>ii!==i));}
+ function addExerciseToWorkout(workoutId:string,exerciseId:string){patchWorkoutItems(workoutId,items=>[...items,{exerciseId,notes:'',sets:[emptySet(),emptySet(),emptySet()]}]);}
+ function updateWorkoutItemNotes(workoutId:string,i:number,value:string){patchWorkoutItems(workoutId,items=>items.map((it,ii)=>ii===i?{...it,notes:value}:it));}
+ async function updateWorkoutDate(workoutId:string,newDate:string){await updateDoc(doc(db,base,'workouts',workoutId),{date:newDate});setSelectedDay(newDate);setEditingSelectedDate(false);}
+ async function updateWorkoutNotes(workoutId:string,value:string){await updateDoc(doc(db,base,'workouts',workoutId),{notes:value});}
 
  const completedDates=useMemo(()=>new Set(workouts.map(w=>w.date)),[workouts]);
  const cells=monthMatrix(calMonth.y,calMonth.m);
+ const selectedWorkout=selectedDay?workouts.find(w=>w.date===selectedDay):undefined;
 
  return <div className="app">
   <header><div><span className="kicker">MEUS.TREINOS</span><h1>Olá, {user.displayName?.split(' ')[0]||'Eduarda'}</h1></div><button className="ghost" onClick={()=>signOut(auth)}><LogOut size={18}/> Sair</button></header>
-  <nav>{([['today',Dumbbell,'Hoje'],['exercises',Layers3,'Exercícios'],['templates',Plus,'Modelos'],['history',History,'Histórico'],['calendar',CalendarDays,'Calendário']] as const).map(([id,Icon,label])=><button className={tab===id?'active':''} onClick={()=>setTab(id)} key={id}><Icon size={18}/>{label}</button>)}</nav>
+  <nav>{([['today',Dumbbell,'Hoje'],['exercises',Layers3,'Exercícios'],['templates',Plus,'Modelos'],['calendar',CalendarDays,'Calendário'],['evolution',TrendingUp,'Evolução']] as const).map(([id,Icon,label])=><button className={tab===id?'active':''} onClick={()=>setTab(id)} key={id}><Icon size={18}/>{label}</button>)}</nav>
 
   {tab==='today'&&<main>
    <section className="hero"><div><span className="kicker">TREINO</span><h2>Registrar treino</h2><p>Carregue um modelo ou monte livremente. Você pode escolher a data.</p></div>
@@ -93,22 +117,7 @@ export default function App(){
    <div className="summary"><div><b>{stats.exercises}</b><span>exercícios</span></div><div><b>{stats.sets}</b><span>séries</span></div><div><b>{Math.round(stats.volume).toLocaleString('pt-BR')} kg</b><span>volume</span></div></div>
    <section className="panel"><div className="panelHead"><h3>Exercícios</h3><select onChange={e=>{if(e.target.value)addExerciseToToday(e.target.value);e.target.value=''}}><option value="">+ Adicionar exercício</option>{exercises.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></div>
     {!activeItems.length?<div className="empty">Nenhum exercício selecionado.</div>:activeItems.map((item,i)=>{const ex=exercises.find(e=>e.id===item.exerciseId);return <article className="workoutCard" key={`${item.exerciseId}-${i}`}><div className="cardHead"><div><h3>{ex?.name||'Exercício'}</h3><span>{ex?.group}</span></div><button className="danger icon" onClick={()=>setActiveItems(v=>v.filter((_,ii)=>ii!==i))}><Trash2 size={17}/></button></div>
-      <div className="setHeader"><span>#</span><span>Peso (kg)</span><span></span><span>Reps</span><span>Feita</span></div>
-      {item.sets.map((s,j)=>{const key=`${i}-${j}`;return <div key={j}>
-        <div className="setRow">
-          <span>{j+1}</span>
-          <input type="number" value={s.weight} onChange={e=>updateSet(i,j,'weight',e.target.value)}/>
-          <button type="button" className="ghost icon platesBtn" title="Calcular por placas" onClick={()=>setCalc(calc?.key===key?null:{key,bar:'20',plate:'20',count:''})}><Calculator size={15}/></button>
-          <input type="number" value={s.reps} onChange={e=>updateSet(i,j,'reps',e.target.value)}/>
-          <input type="checkbox" checked={s.done} onChange={e=>updateSet(i,j,'done',e.target.checked)}/>
-        </div>
-        {calc?.key===key&&<div className="plateCalc">
-          <label>Barra (kg)<input type="number" value={calc.bar} onChange={e=>setCalc({...calc,bar:e.target.value})}/></label>
-          <label>Placa (kg)<select value={calc.plate} onChange={e=>setCalc({...calc,plate:e.target.value})}>{commonPlates.map(p=><option key={p} value={p}>{p}</option>)}</select></label>
-          <label>Placas por lado<input type="number" value={calc.count} onChange={e=>setCalc({...calc,count:e.target.value})}/></label>
-          <div className="row"><button type="button" onClick={()=>applyPlateCalc(i,j)}>Aplicar</button><button type="button" className="secondary" onClick={()=>setCalc(null)}><X size={15}/></button></div>
-        </div>}
-      </div>})}
+      <SetTable sets={item.sets} onChange={(j,key,value)=>updateSet(i,j,key,value)}/>
       <div className="row"><button className="secondary" onClick={()=>setActiveItems(v=>v.map((x,ii)=>ii===i?{...x,sets:[...x.sets,emptySet()]}:x))}>+ Série</button><input className="grow" placeholder="Observação do exercício" value={item.notes} onChange={e=>setActiveItems(v=>v.map((x,ii)=>ii===i?{...x,notes:e.target.value}:x))}/></div></article>})}
     <textarea placeholder="Observação geral do treino" value={workoutNotes} onChange={e=>setWorkoutNotes(e.target.value)}/>
    </section>
@@ -118,23 +127,8 @@ export default function App(){
 
   {tab==='templates'&&<main className="grid2"><section className="panel"><h2>{templateForm.id?'Editar modelo':'Novo modelo'}</h2><label>Nome<input value={templateForm.name} onChange={e=>setTemplateForm({...templateForm,name:e.target.value})}/></label><div className="checks">{exercises.map(e=><label key={e.id}><input type="checkbox" checked={templateForm.exerciseIds.includes(e.id)} onChange={()=>setTemplateForm(f=>({...f,exerciseIds:f.exerciseIds.includes(e.id)?f.exerciseIds.filter(x=>x!==e.id):[...f.exerciseIds,e.id]}))}/>{e.name}</label>)}</div><button onClick={saveTemplate}><Save size={18}/> Salvar modelo</button></section><section><h2>Modelos</h2><div className="cards">{templates.map(t=><article className="mini" key={t.id}><span className="pill">{t.exerciseIds.length} exercícios</span><h3>{t.name}</h3><p>{t.exerciseIds.map(id=>exercises.find(e=>e.id===id)?.name).filter(Boolean).join(' · ')}</p><div className="row"><button onClick={()=>{setTemplateForm(t);scrollTo(0,0)}}>Editar</button><button className="danger" onClick={()=>confirm('Excluir modelo?')&&deleteDoc(doc(db,base,'templates',t.id))}>Excluir</button></div></article>)}</div></section></main>}
 
-  {tab==='history'&&<main>
-   <section className="hero"><div><span className="kicker">EVOLUÇÃO</span><h2>Histórico</h2><p>Treinos concluídos e séries registradas.</p></div>
-    <div className="row"><nav className="subNav"><button className={historyView==='lista'?'active':''} onClick={()=>setHistoryView('lista')}><History size={16}/>Lista</button><button className={historyView==='evolucao'?'active':''} onClick={()=>setHistoryView('evolucao')}><TrendingUp size={16}/>Evolução</button></nav></div>
-   </section>
-
-   {historyView==='lista'&&<div className="history">{!workouts.length?<div className="empty">Nenhum treino concluído.</div>:workouts.map(w=><article className="panel" key={w.id}><div className="panelHead"><div><h3>{w.templateName}</h3>
-     {editingDateId===w.id?<input type="date" value={w.date} onChange={e=>updateWorkoutDate(w.id,e.target.value)} onBlur={()=>setEditingDateId(null)} autoFocus/>:<span>{fmtLong(w.date)} <button className="ghost icon" onClick={()=>setEditingDateId(w.id)}><Pencil size={13}/></button></span>}
-    </div><button className="danger icon" onClick={()=>confirm('Excluir treino?')&&deleteDoc(doc(db,base,'workouts',w.id))}><Trash2 size={17}/></button></div>{w.items.map((it,i)=>{const ex=exercises.find(e=>e.id===it.exerciseId);return <div className="historyRow" key={i}><b>{ex?.name||'Exercício'}</b><span>{it.sets.filter(s=>s.weight||s.reps).map(s=>`${s.weight||0} kg × ${s.reps||0}`).join(' · ')}</span>{it.notes&&<small>{it.notes}</small>}</div>})}{w.notes&&<p>{w.notes}</p>}</article>)}</div>}
-
-   {historyView==='evolucao'&&<section className="panel">
-    <div className="panelHead"><h3>Evolução por exercício</h3><select value={evoExercise} onChange={e=>setEvoExercise(e.target.value)}><option value="">Escolher exercício</option>{exercises.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></div>
-    {!evoExercise?<div className="empty">Escolha um exercício para ver a evolução.</div>:<EvolutionChart workouts={workouts} exerciseId={evoExercise}/>}
-   </section>}
-  </main>}
-
-  {tab==='calendar'&&<main>
-   <section className="hero"><div><span className="kicker">PLANEJAMENTO</span><h2>Calendário</h2><p>Programe treinos recorrentes e acompanhe sua frequência.</p></div></section>
+  {tab==='calendar'&&calView==='month'&&<main>
+   <section className="hero"><div><span className="kicker">PLANEJAMENTO</span><h2>Calendário</h2><p>Programe treinos recorrentes e acompanhe sua frequência.</p><button className="secondary" onClick={()=>setCalView('schedule')}><CalendarDays size={17}/> Agendar treino recorrente</button></div></section>
 
    <section className="panel">
     <div className="panelHead">
@@ -150,7 +144,7 @@ export default function App(){
       const done=completedDates.has(iso);
       const scheduledHere=schedules.filter(s=>isScheduledOn(s,d));
       const isToday=iso===today();
-      return <button key={i} className={`calCell${done?' calDone':''}${scheduledHere.length?' calScheduled':''}${isToday?' calToday':''}${selectedDay===iso?' calSelected':''}`} onClick={()=>setSelectedDay(iso===selectedDay?null:iso)}>
+      return <button key={i} className={`calCell${done?' calDone':''}${scheduledHere.length&&!done?' calScheduled':''}${isToday?' calToday':''}${selectedDay===iso?' calSelected':''}`} onClick={()=>{setSelectedDay(iso===selectedDay?null:iso);setEditingSelectedDate(false)}}>
        <span>{d.getDate()}</span>
       </button>;
      })}
@@ -158,15 +152,34 @@ export default function App(){
     <div className="calLegend"><span><i className="dotDone"/> treino feito</span><span><i className="dotSched"/> agendado</span></div>
 
     {selectedDay&&<div className="dayDetail">
-     <b>{fmtLong(selectedDay)}</b>
-     {completedDates.has(selectedDay)&&<p>Treino já registrado nesse dia. Veja no histórico.</p>}
-     {schedules.filter(s=>isScheduledOn(s,new Date(selectedDay+'T12:00:00'))).map(s=>{const t=templates.find(x=>x.id===s.templateId);return <div className="row" key={s.id}><span>{t?.name||'Modelo'}</span>{!completedDates.has(selectedDay)&&<button onClick={()=>startScheduledWorkout(selectedDay,s.templateId)}>Iniciar treino</button>}</div>})}
-     {!schedules.some(s=>isScheduledOn(s,new Date(selectedDay+'T12:00:00')))&&!completedDates.has(selectedDay)&&<p className="empty">Nada programado para esse dia.</p>}
+     {selectedWorkout?<>
+      <div className="dayDetailHead">
+       <div>
+        {editingSelectedDate?<input type="date" value={selectedWorkout.date} onChange={e=>updateWorkoutDate(selectedWorkout.id,e.target.value)} autoFocus/>:<b>{fmtLong(selectedWorkout.date)} <button className="ghost icon" onClick={()=>setEditingSelectedDate(true)}><Pencil size={13}/></button></b>}
+        <div><span className="pill">{selectedWorkout.templateName}</span> <span className="volumeTag">Volume: {Math.round(workoutVolume(selectedWorkout)).toLocaleString('pt-BR')} kg</span></div>
+       </div>
+       <button className="danger icon" onClick={()=>confirm('Excluir treino?')&&deleteDoc(doc(db,base,'workouts',selectedWorkout.id)).then(()=>setSelectedDay(null))}><Trash2 size={17}/></button>
+      </div>
+
+      <div className="panelHead"><h4>Exercícios</h4><select onChange={e=>{if(e.target.value)addExerciseToWorkout(selectedWorkout.id,e.target.value);e.target.value=''}}><option value="">+ Adicionar exercício</option>{exercises.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></div>
+      {selectedWorkout.items.map((item,i)=>{const ex=exercises.find(e=>e.id===item.exerciseId);return <article className="workoutCard" key={`${item.exerciseId}-${i}`}>
+       <div className="cardHead"><div><h3>{ex?.name||'Exercício'}</h3><span>{ex?.group}</span></div><button className="danger icon" onClick={()=>removeWorkoutItem(selectedWorkout.id,i)}><Trash2 size={17}/></button></div>
+       <SetTable sets={item.sets} onChange={(j,key,value)=>updateWorkoutSet(selectedWorkout.id,i,j,key,value)}/>
+       <div className="row"><button className="secondary" onClick={()=>addSetToWorkoutItem(selectedWorkout.id,i)}>+ Série</button><input className="grow" placeholder="Observação do exercício" value={item.notes} onChange={e=>updateWorkoutItemNotes(selectedWorkout.id,i,e.target.value)}/></div>
+      </article>})}
+      <textarea placeholder="Observação geral do treino" value={selectedWorkout.notes} onChange={e=>updateWorkoutNotes(selectedWorkout.id,e.target.value)}/>
+     </>:<>
+      <b>{fmtLong(selectedDay)}</b>
+      {schedules.filter(s=>isScheduledOn(s,new Date(selectedDay+'T12:00:00'))).map(s=>{const t=templates.find(x=>x.id===s.templateId);return <div className="row" key={s.id}><span>{t?.name||'Modelo'}</span><button onClick={()=>startScheduledWorkout(selectedDay,s.templateId)}>Iniciar treino</button></div>})}
+      {!schedules.some(s=>isScheduledOn(s,new Date(selectedDay+'T12:00:00')))&&<div className="emptyDayActions"><p className="empty">Nada programado para esse dia.</p><button className="secondary" onClick={()=>startFreeWorkoutOn(selectedDay)}><Plus size={16}/> Registrar treino nesse dia</button></div>}
+     </>}
     </div>}
    </section>
+  </main>}
 
+  {tab==='calendar'&&calView==='schedule'&&<main>
+   <section className="hero"><div><button className="ghost backBtn" onClick={()=>setCalView('month')}><ChevronLeft size={18}/> Voltar ao calendário</button><h2>Agendar treino recorrente</h2><p>Escolha um modelo, os dias da semana e por quanto tempo repetir.</p></div></section>
    <section className="panel">
-    <h3>Agendar treino recorrente</h3>
     <label>Modelo<select value={scheduleForm.templateId} onChange={e=>setScheduleForm({...scheduleForm,templateId:e.target.value})}><option value="">Escolher modelo</option>{templates.map(t=><option value={t.id} key={t.id}>{t.name}</option>)}</select></label>
     <label>Dias da semana<div className="weekdayPicker">{weekdayLabels.map((d,idx)=><button type="button" key={d} className={scheduleForm.weekdays.includes(idx)?'active':''} onClick={()=>setScheduleForm(f=>({...f,weekdays:f.weekdays.includes(idx)?f.weekdays.filter(x=>x!==idx):[...f.weekdays,idx]}))}>{d}</button>)}</div></label>
     <div className="row">
@@ -174,8 +187,18 @@ export default function App(){
      <label>Repetir por (semanas)<input type="number" min={1} value={scheduleForm.weeks} onChange={e=>setScheduleForm({...scheduleForm,weeks:+e.target.value||1})}/></label>
     </div>
     <button onClick={saveSchedule}><Save size={18}/> Salvar agendamento</button>
+   </section>
+   <section className="panel">
+    <h3>Agendamentos criados</h3>
+    {!schedules.length?<div className="empty">Nenhum agendamento ainda.</div>:<div className="cards">{schedules.map(s=>{const t=templates.find(x=>x.id===s.templateId);return <article className="mini" key={s.id}><span className="pill">{s.weekdays.map(w=>weekdayLabels[w]).join(', ')}</span><h3>{t?.name||'Modelo'}</h3><p>A partir de {fmtLong(s.startDate)} · {s.weeks} semanas</p><button className="danger" onClick={()=>confirm('Excluir agendamento?')&&deleteDoc(doc(db,base,'schedules',s.id))}>Excluir</button></article>})}</div>}
+   </section>
+  </main>}
 
-    {schedules.length>0&&<div className="cards" style={{marginTop:16}}>{schedules.map(s=>{const t=templates.find(x=>x.id===s.templateId);return <article className="mini" key={s.id}><span className="pill">{s.weekdays.map(w=>weekdayLabels[w]).join(', ')}</span><h3>{t?.name||'Modelo'}</h3><p>A partir de {fmtLong(s.startDate)} · {s.weeks} semanas</p><button className="danger" onClick={()=>confirm('Excluir agendamento?')&&deleteDoc(doc(db,base,'schedules',s.id))}>Excluir</button></article>})}</div>}
+  {tab==='evolution'&&<main>
+   <section className="hero"><div><span className="kicker">EVOLUÇÃO</span><h2>Evolução por exercício</h2><p>Acompanhe o peso máximo alcançado em cada treino.</p></div></section>
+   <section className="panel">
+    <div className="panelHead"><h3>Exercício</h3><select value={evoExercise} onChange={e=>setEvoExercise(e.target.value)}><option value="">Escolher exercício</option>{exercises.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></div>
+    {!evoExercise?<div className="empty">Escolha um exercício para ver a evolução.</div>:<EvolutionChart workouts={workouts} exerciseId={evoExercise}/>}
    </section>
   </main>}
  </div>
@@ -189,14 +212,21 @@ function EvolutionChart({workouts,exerciseId}:{workouts:Workout[];exerciseId:str
 
  if(!data.length)return <div className="empty">Nenhum registro de peso ainda para este exercício.</div>;
  const max=Math.max(...data.map(d=>d.maxWeight),1);
- const w=Math.max(320,data.length*56),h=200,padB=28,padT=12;
+ const chartH=260,padB=36,padT=28,padL=40,barW=40,gap=24;
+ const plotH=chartH-padB-padT;
+ const w=Math.max(380,padL+data.length*(barW+gap)+gap);
+ const gridSteps=[0,0.25,0.5,0.75,1];
  return <div className="evoChartWrap">
-  <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
-   {data.map((d,i)=>{const barH=((d.maxWeight/max)*(h-padB-padT));const x=i*56+14,y=h-padB-barH;
+  <svg width={w} height={chartH} viewBox={`0 0 ${w} ${chartH}`}>
+   {gridSteps.map(g=>{const y=padT+plotH-(g*plotH);const val=Math.round(max*g);return <g key={g}>
+     <line x1={padL} x2={w-8} y1={y} y2={y} stroke="#E5E5EA" strokeWidth={1} strokeDasharray="4 4"/>
+     <text x={padL-8} y={y+4} textAnchor="end" fontSize="10" fill="#6E6E73">{val}</text>
+    </g>;})}
+   {data.map((d,i)=>{const barH=(d.maxWeight/max)*plotH;const x=padL+gap+i*(barW+gap);const y=padT+plotH-barH;
     return <g key={d.date}>
-     <rect x={x} y={y} width={28} height={barH} rx={6} fill="#008B8B"/>
-     <text x={x+14} y={y-6} textAnchor="middle" fontSize="11" fill="#1C1C1E">{d.maxWeight}</text>
-     <text x={x+14} y={h-10} textAnchor="middle" fontSize="10" fill="#6E6E73">{d.date.slice(5).split('-').reverse().join('/')}</text>
+     <rect x={x} y={y} width={barW} height={barH} rx={8} fill="#008B8B"/>
+     <text x={x+barW/2} y={y-10} textAnchor="middle" fontSize="13" fontWeight="700" fill="#1C1C1E">{d.maxWeight}kg</text>
+     <text x={x+barW/2} y={chartH-14} textAnchor="middle" fontSize="11" fill="#6E6E73">{d.date.slice(5).split('-').reverse().join('/')}</text>
     </g>;})}
   </svg>
  </div>;

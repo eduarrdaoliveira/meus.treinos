@@ -96,10 +96,20 @@ nav button.active{
 input,select,textarea{
   width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);
   padding:11px 12px;background:var(--surface);color:var(--text);
-  transition:border-color .12s ease;
+  transition:border-color .15s ease, box-shadow .15s ease;
 }
-input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 textarea{min-height:90px;resize:vertical;margin-top:12px}
+
+select{
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23008B8B' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center;
+  padding-right:34px;cursor:pointer;color:var(--text);
+}
+select:hover{border-color:#c7c7cc}
+input[type=date]{color:var(--text);cursor:pointer}
+input[type=checkbox]{width:auto}
 
 label{display:grid;gap:6px;font-weight:600;font-size:.85rem;margin:12px 0;color:var(--text)}
 
@@ -135,25 +145,24 @@ label{display:grid;gap:6px;font-weight:600;font-size:.85rem;margin:12px 0;color:
   .grid2{grid-template-columns:1fr}
   .summary{grid-template-columns:repeat(3,1fr)}
   .row{flex-wrap:wrap}
-  .setHeader,.setRow{grid-template-columns:24px 1fr 26px 1fr 52px}
+  .setHeader,.setRow{grid-template-columns:20px 1fr 48px 1fr 28px}
   nav button{flex:1;font-size:.8rem}
   .ghost{padding:9px 11px}
   .panel{padding:15px}
 }
 
-.setHeader,.setRow{grid-template-columns:24px 1fr 26px 1fr 64px}
-.platesBtn{padding:6px;background:var(--surface-2)}
-.platesBtn:hover{background:var(--accent-soft)}
+.setHeader,.setRow{grid-template-columns:22px 1fr 56px 1fr 32px}
 
-.plateCalc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:var(--accent-soft);border-radius:var(--radius-sm);padding:10px;margin:-4px 0 10px}
-.plateCalc label{margin:0;font-size:.72rem}
-.plateCalc .row{grid-column:1/-1;margin-top:2px}
+.unitToggle{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;height:32px}
+.unitToggle button{flex:1;border:0;border-radius:0;background:var(--surface);color:var(--text-secondary);font-size:10px;font-weight:700;padding:0;letter-spacing:.02em}
+.unitToggle button.active{background:var(--accent);color:#fff}
+.unitToggle button:hover:not(.active){background:var(--surface-2)}
 
 .subNav{display:flex;background:var(--surface-2);padding:4px;border-radius:var(--radius-md);gap:4px}
 .subNav button{background:transparent;color:var(--text-secondary);font-weight:600;font-size:.85rem}
 .subNav button.active{background:var(--surface);color:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.08)}
 
-.evoChartWrap{overflow-x:auto;padding:8px 0}
+.evoChartWrap{overflow-x:auto;padding:12px 4px;background:var(--surface-2);border-radius:var(--radius-md)}
 
 .calendarGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin:12px 0}
 .calWeekday{text-align:center;font-size:.72rem;color:var(--text-secondary);font-weight:600;padding:4px 0}
@@ -162,7 +171,7 @@ label{display:grid;gap:6px;font-weight:600;font-size:.85rem;margin:12px 0;color:
 .calEmpty{border:none;background:transparent;cursor:default}
 .calToday{border-color:var(--accent);border-width:2px;font-weight:700}
 .calDone{background:var(--accent);color:#fff}
-.calScheduled:not(.calDone)::after{content:'';position:absolute;bottom:5px;width:5px;height:5px;border-radius:999px;background:var(--accent)}
+.calScheduled::after{content:'';position:absolute;bottom:5px;width:5px;height:5px;border-radius:999px;background:var(--accent)}
 .calSelected{outline:2px solid var(--accent-press);outline-offset:1px}
 
 .calLegend{display:flex;gap:16px;font-size:.78rem;color:var(--text-secondary);margin-bottom:8px}
@@ -170,8 +179,16 @@ label{display:grid;gap:6px;font-weight:600;font-size:.85rem;margin:12px 0;color:
 .dotDone{width:10px;height:10px;border-radius:999px;background:var(--accent);display:inline-block}
 .dotSched{width:6px;height:6px;border-radius:999px;background:var(--accent);display:inline-block;margin:0 2px}
 
-.dayDetail{border-top:1px solid var(--border);padding-top:12px;margin-top:8px;display:grid;gap:8px}
+.dayDetail{border-top:1px solid var(--border);padding-top:14px;margin-top:8px;display:grid;gap:10px}
+.dayDetailHead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.dayDetailHead b{display:flex;align-items:center;gap:4px;font-size:1rem}
+.dayDetailHead div>div{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap}
+.volumeTag{display:inline-block;background:var(--surface-2);color:var(--text-secondary);padding:5px 10px;border-radius:999px;font-size:.72rem;font-weight:600}
+.emptyDayActions{display:grid;gap:10px}
 
 .weekdayPicker{display:flex;gap:6px;flex-wrap:wrap}
 .weekdayPicker button{background:var(--surface-2);color:var(--text-secondary);padding:8px 12px;font-size:.8rem}
 .weekdayPicker button.active{background:var(--accent);color:#fff}
+
+.backBtn{background:transparent;color:var(--accent);padding:6px 0;margin-bottom:6px;font-weight:600}
+.backBtn:hover{background:transparent;opacity:.7}
