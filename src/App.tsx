@@ -63,6 +63,7 @@ export default function App(){
  const [activeItems,setActiveItems]=useState<WorkoutItem[]>([]),[workoutNotes,setWorkoutNotes]=useState('');
  const [workoutDate,setWorkoutDate]=useState(today());
  const [evoExercise,setEvoExercise]=useState('');
+ const [evoTemplateFilter,setEvoTemplateFilter]=useState('');
  const [calMonth,setCalMonth]=useState(()=>{const d=new Date();return{y:d.getFullYear(),m:d.getMonth()};});
  const [calView,setCalView]=useState<CalView>('month');
  const [scheduleForm,setScheduleForm]=useState({templateId:'',weekdays:[] as number[],startDate:today(),weeks:8});
@@ -84,7 +85,8 @@ export default function App(){
 
  const stats=useMemo(()=>{const sets=activeItems.flatMap(i=>i.sets);return{exercises:activeItems.length,sets:sets.length,volume:sets.reduce((a,s)=>a+(+s.weight||0)*(+s.reps||0),0)}},[activeItems]);
  const completedDates=useMemo(()=>new Set(workouts.map(w=>w.date)),[workouts]);
- const volumeByDate=useMemo(()=>{const map=new Map<string,number>();workouts.forEach(w=>map.set(w.date,(map.get(w.date)||0)+workoutVolume(w)));return Array.from(map,([date,value])=>({date,value})).sort((a,b)=>a.date.localeCompare(b.date));},[workouts]);
+ const volumeByDate=useMemo(()=>{const filtered=evoTemplateFilter?workouts.filter(w=>w.templateName===evoTemplateFilter):workouts;const map=new Map<string,{value:number;labels:Set<string>}>();filtered.forEach(w=>{const cur=map.get(w.date)||{value:0,labels:new Set<string>()};cur.value+=workoutVolume(w);cur.labels.add(w.templateName);map.set(w.date,cur);});return Array.from(map,([date,v])=>({date,value:v.value,label:evoTemplateFilter?undefined:Array.from(v.labels).join(' + ')})).sort((a,b)=>a.date.localeCompare(b.date));},[workouts,evoTemplateFilter]);
+ const templateNameOptions=useMemo(()=>Array.from(new Set(workouts.map(w=>w.templateName))).sort((a,b)=>a.localeCompare(b)),[workouts]);
  if(loading)return <div className="center">Carregando…</div>;
  if(!user)return <Login/>;
  const base=`users/${user.uid}`;
@@ -207,7 +209,7 @@ export default function App(){
   {tab==='evolution'&&<main>
    <section className="hero"><div><span className="kicker">EVOLUÇÃO</span><h2>Evolução</h2><p>Acompanhe seu volume de treino ao longo do tempo.</p></div></section>
    <section className="panel">
-    <h3>Volume total por treino (kg)</h3>
+    <div className="panelHead"><h3>Volume total por treino (kg)</h3><select value={evoTemplateFilter} onChange={e=>setEvoTemplateFilter(e.target.value)}><option value="">Todos os treinos</option>{templateNameOptions.map(n=><option key={n} value={n}>{n}</option>)}</select></div>
     <LineChart data={volumeByDate}/>
    </section>
    <section className="panel">
@@ -219,10 +221,11 @@ export default function App(){
  </div>
 }
 
-function LineChart({data}:{data:{date:string;value:number}[]}){
+function LineChart({data}:{data:{date:string;value:number;label?:string}[]}){
  if(!data.length)return <div className="empty">Sem dados suficientes ainda.</div>;
  const max=Math.max(...data.map(d=>d.value),1);
- const chartH=240,padB=32,padT=26,padL=44,padR=18;
+ const hasLabels=data.some(d=>d.label);
+ const chartH=hasLabels?262:240,padB=hasLabels?54:32,padT=26,padL=44,padR=18;
  const plotH=chartH-padB-padT;
  const stepX=data.length>1?70:0;
  const plotW=Math.max(240,stepX*(data.length-1));
@@ -240,7 +243,8 @@ function LineChart({data}:{data:{date:string;value:number}[]}){
    {pts.map(p=><g key={p.date}>
     <circle cx={p.x} cy={p.y} r={5} fill="#008B8B"/>
     <text x={p.x} y={p.y-12} textAnchor="middle" fontSize="12" fontWeight="700" fill="#1C1C1E">{Math.round(p.value).toLocaleString('pt-BR')}</text>
-    <text x={p.x} y={chartH-12} textAnchor="middle" fontSize="11" fill="#6E6E73">{p.date.slice(5).split('-').reverse().join('/')}</text>
+    <text x={p.x} y={chartH-(hasLabels?32:12)} textAnchor="middle" fontSize="11" fill="#6E6E73">{p.date.slice(5).split('-').reverse().join('/')}</text>
+    {p.label&&<text x={p.x} y={chartH-16} textAnchor="middle" fontSize="10" fontWeight="600" fill="#008B8B">{p.label.length>12?p.label.slice(0,11)+'…':p.label}</text>}
    </g>)}
   </svg>
  </div>;
@@ -248,17 +252,17 @@ function LineChart({data}:{data:{date:string;value:number}[]}){
 
 function ExerciseEvolution({workouts,exerciseId}:{workouts:Workout[];exerciseId:string}){
  const data=useMemo(()=>workouts
-  .map(w=>{const it=w.items.find(i=>i.exerciseId===exerciseId);if(!it)return null;const volume=it.sets.reduce((a,s)=>a+(+s.weight||0)*(+s.reps||0),0);const reps=it.sets.reduce((a,s)=>a+(+s.reps||0),0);return{date:w.date,volume,reps};})
-  .filter((x):x is{date:string;volume:number;reps:number}=>!!x&&(x.volume>0||x.reps>0))
+  .map(w=>{const it=w.items.find(i=>i.exerciseId===exerciseId);if(!it)return null;const volume=it.sets.reduce((a,s)=>a+(+s.weight||0)*(+s.reps||0),0);const reps=it.sets.reduce((a,s)=>a+(+s.reps||0),0);return{date:w.date,volume,reps,label:w.templateName};})
+  .filter((x):x is{date:string;volume:number;reps:number;label:string}=>!!x&&(x.volume>0||x.reps>0))
   .sort((a,b)=>a.date.localeCompare(b.date)),[workouts,exerciseId]);
 
  if(!data.length)return <div className="empty">Nenhum registro ainda para este exercício.</div>;
  return <div className="exerciseEvo">
   <p className="statLine">Dias realizados: <b>{data.length}</b></p>
   <h4>Volume (kg)</h4>
-  <LineChart data={data.map(d=>({date:d.date,value:d.volume}))}/>
+  <LineChart data={data.map(d=>({date:d.date,value:d.volume,label:d.label}))}/>
   <h4>Repetições</h4>
-  <LineChart data={data.map(d=>({date:d.date,value:d.reps}))}/>
+  <LineChart data={data.map(d=>({date:d.date,value:d.reps,label:d.label}))}/>
  </div>;
 }
 
