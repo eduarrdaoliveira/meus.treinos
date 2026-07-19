@@ -84,23 +84,35 @@
   }
 
   function dadosAtuais(){
-    return {topicos:estado.topicos,tarefas:estado.tarefas,conclusoes:estado.conclusoes,atualizadoEm:Date.now()};
+    // remove valores "undefined" (o Firestore rejeita e derruba a gravação inteira)
+    return JSON.parse(JSON.stringify({topicos:estado.topicos,tarefas:estado.tarefas,conclusoes:estado.conclusoes,atualizadoEm:Date.now()}));
   }
+
+  var tentativasFalhas = 0;
 
   function agendarSincronizacao(){
     if(!usuarioAtual || !db) return;
     statusSync = "salvando";
     render();
     clearTimeout(syncTimer);
-    syncTimer = setTimeout(async function(){
-      try{
-        await db.collection("usuarios").doc(usuarioAtual.uid).set(dadosAtuais(), {merge:true});
-        statusSync = "salvo";
-      }catch(e){
-        console.error(e); statusSync = "erro";
-      }
+    syncTimer = setTimeout(function(){ tentarSincronizar(0); }, 350);
+  }
+
+  function tentarSincronizar(tentativa){
+    db.collection("usuarios").doc(usuarioAtual.uid).set(dadosAtuais(), {merge:true}).then(function(){
+      tentativasFalhas = 0;
+      statusSync = "salvo";
       render();
-    }, 350);
+    }).catch(function(e){
+      console.error("Erro ao sincronizar com o Firestore:", e);
+      if(tentativa < 2){
+        setTimeout(function(){ tentarSincronizar(tentativa+1); }, 1500);
+      } else {
+        tentativasFalhas++;
+        statusSync = "erro";
+        render();
+      }
+    });
   }
 
   async function carregarDaNuvem(user){
@@ -251,7 +263,7 @@
     return !!estado.conclusoes[chaveConclusao(tarefaId, dataISO)];
   }
 
-  function renderItemTarefa(tarefa, dataISO, mostrarTopicoSempre){
+  function renderItemTarefa(tarefa, dataISO, mostrarAvatarTopico){
     var topico = topicoPorId(tarefa.topicoId);
     var marcada = concluidaEm(tarefa.id, dataISO);
     var corTopico = topico ? topico.cor : "#999";
@@ -260,7 +272,8 @@
     html += '<div class="conteudo linha-tarefa">';
     html += '<span class="titulo-tarefa">'+escapeHTML(tarefa.titulo)+'</span>';
     if(topico){
-      html += '<span class="pilula-topico" style="background:'+corTopico+'14;color:'+corTopico+'"><span class="avatar-topico" style="background:'+corTopico+'">'+escapeHTML(iniciais(topico.nome))+'</span>'+escapeHTML(topico.nome)+'</span>';
+      var avatarHtml = mostrarAvatarTopico ? ('<span class="avatar-topico" style="background:'+corTopico+'">'+escapeHTML(iniciais(topico.nome))+'</span>') : '';
+      html += '<span class="pilula-topico" style="background:'+corTopico+'14;color:'+corTopico+'">'+avatarHtml+escapeHTML(topico.nome)+'</span>';
     }
     if(tarefa.recorrencia==="diaria") html += '<span class="info-recorrencia">Diária</span>';
     if(tarefa.recorrencia==="semanal") html += '<span class="info-recorrencia">'+(tarefa.diasSemana||[]).map(function(n){return NOMES_DIAS[n];}).join(", ")+'</span>';
@@ -512,7 +525,7 @@
     var hoje = new Date(); hoje.setHours(0,0,0,0);
     var diaSemanaHoje = hoje.getDay();
     var fimGrade = new Date(hoje); fimGrade.setDate(fimGrade.getDate() + (6 - diaSemanaHoje));
-    var totalSemanas = 12;
+    var totalSemanas = 24;
     var inicioGrade = new Date(fimGrade); inicioGrade.setDate(inicioGrade.getDate() - (totalSemanas*7 - 1));
 
     var html = '<div class="heatmap">';
